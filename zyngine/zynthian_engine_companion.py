@@ -250,7 +250,7 @@ class zynthian_engine_companion(zynthian_engine):
         # for ch in range(COMPANION_NUM_CHANNELS):
         #     prog = zyncompanion.get_channel_program(self.companion_handle, ch)
         #     if prog >= 0:
-        #         self.channel_instruments[ch] = self._gm_program_name(prog)
+        #         self.channel_instruments[ch] = self.gm_program_name(prog)
 
     # ---------------------------------------------------------------------------
     # Controller Building

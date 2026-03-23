@@ -187,7 +187,7 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
         if self.channel_instruments:
             for ch in sorted(self.channel_instruments.keys()):
                 instr_name = self.channel_instruments[ch]
-                ch_label = f"Ch {ch + 1:2d}: {instr_name}"
+                ch_label = f"Ch {ch + 1}: {instr_name}"
                 item = self.widget_canvas.create_text(
                     pad + 4, y,
                     anchor=tkinter.NW,
