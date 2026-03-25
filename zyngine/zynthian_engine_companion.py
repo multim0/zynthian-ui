@@ -27,15 +27,12 @@ import logging
 
 from zyngine.zynthian_engine import zynthian_engine
 from zyngine.zynthian_controller import zynthian_controller
+from zynlibs.zyncompanion import zyncompanion
 
-# ACTION REQUIRED: Import the companion LV2 library bindings once available
-# from zynlibs.zyncompanion import zyncompanion
-
-# ACTION REQUIRED: Confirm the exact LV2 plugin URI from multim0/zynthian-companion
-COMPANION_LV2_URI = "http://zynthian.org/plugins/companion-style-player"
+COMPANION_LV2_URI = "http://zynthian-companion.local/accompaniment-engine#lv2"
 
 # Number of style channels supported by the companion plugin
-# ACTION REQUIRED: Confirm actual number of channels from the LV2 plugin spec
+# Most styles use only 8 channels + 10th channel for drums, but some may use more. Set to 16 for safety.
 COMPANION_NUM_CHANNELS = 16
 
 # ------------------------------------------------------------------------------
@@ -50,8 +47,7 @@ class zynthian_engine_companion(zynthian_engine):
     # ---------------------------------------------------------------------------
 
     # File extensions for style preset files
-    # ACTION REQUIRED: Confirm the actual file extension(s) used by companion style files
-    preset_fexts = ["sty", "mid"]
+    preset_fexts = ["sty", "sff"]
 
     # Root directories for style file catalogs
     root_bank_dirs = [
@@ -73,7 +69,7 @@ class zynthian_engine_companion(zynthian_engine):
         super().__init__(state_manager)
         self.name = "CompanionStylePlayer"
         self.nickname = "CP"
-        self.type = "MIDI Synth"
+        self.type = "MIDI Tool"
         self.custom_gui_fpath = os.environ.get(
             'ZYNTHIAN_UI_DIR',
             "/zynthian/zynthian-ui"
@@ -88,15 +84,17 @@ class zynthian_engine_companion(zynthian_engine):
         self.playing = False
 
         # GM instruments per channel (populated after loading a style)
+        # comment
         self.channel_instruments = {}
 
         # Monitors dict for widget updates
         self.monitors_dict = {}
         self._update_monitors()
 
-        # ACTION REQUIRED: Initialize the companion LV2 plugin instance
-        # This depends on how the LV2 plugin is hosted (jalv or native binding)
-        # Example: self.companion = zyncompanion.create_instance()
+        # Create the accompaniment engine instance
+        self.companion_handle = zyncompanion.create_engine()
+        if not self.companion_handle:
+            logging.error("Companion: Failed to create accompaniment engine")
 
     # ---------------------------------------------------------------------------
     # Processor Management
@@ -145,8 +143,12 @@ class zynthian_engine_companion(zynthian_engine):
         self.style_file = fpath
         logging.info(f"Companion: Loading style file '{fpath}'")
 
-        # ACTION REQUIRED: Call the LV2 plugin to load the style file
-        # Example: zyncompanion.load_style(self.companion_handle, fpath)
+        # Load the style file via the accompaniment engine
+        result = zyncompanion.load_file(self.companion_handle, fpath)
+        if result != zyncompanion.RESULT_OK:
+            logging.error(f"Companion: Failed to load style file: {zyncompanion.result_string(result)}")
+            self.style_file = None
+            return False
 
         # Parse sections from the style file
         self._parse_sections(fpath)
@@ -187,8 +189,9 @@ class zynthian_engine_companion(zynthian_engine):
         elif zctrl.symbol == "section":
             section_idx = int(zctrl.value)
             self.select_section(section_idx)
-        # ACTION REQUIRED: Handle additional controller parameters
-        # based on the LV2 plugin's port definitions
+        elif zctrl.symbol == "tempo":
+            zyncompanion.set_tempo(self.companion_handle, float(zctrl.value))
+            self._update_monitors()
 
     # ---------------------------------------------------------------------------
     # Transport Controls
@@ -199,18 +202,19 @@ class zynthian_engine_companion(zynthian_engine):
         if not self.style_file:
             logging.warning("Companion: No style file loaded")
             return
-        self.playing = True
-        logging.info("Companion: Start playing")
-        # ACTION REQUIRED: Send play command to the LV2 plugin
-        # Example: zyncompanion.play(self.companion_handle)
+        result = zyncompanion.play(self.companion_handle)
+        if result == zyncompanion.RESULT_OK:
+            self.playing = True
+            logging.info("Companion: Start playing")
+        else:
+            logging.warning(f"Companion: Play failed: {zyncompanion.result_string(result)}")
         self._update_monitors()
 
     def stop_playing(self):
         """Stop playing the current style."""
+        zyncompanion.stop(self.companion_handle)
         self.playing = False
         logging.info("Companion: Stop playing")
-        # ACTION REQUIRED: Send stop command to the LV2 plugin
-        # Example: zyncompanion.stop(self.companion_handle)
         self._update_monitors()
 
     def select_section(self, section_idx):
@@ -218,8 +222,7 @@ class zynthian_engine_companion(zynthian_engine):
         if 0 <= section_idx < len(self.sections):
             self.current_section = self.sections[section_idx]
             logging.info(f"Companion: Selected section '{self.current_section}'")
-            # ACTION REQUIRED: Send section change to the LV2 plugin
-            # Example: zyncompanion.set_section(self.companion_handle, section_idx)
+            zyncompanion.queue_section(self.companion_handle, section_idx)
             self._update_monitors()
 
     # ---------------------------------------------------------------------------
@@ -227,30 +230,37 @@ class zynthian_engine_companion(zynthian_engine):
     # ---------------------------------------------------------------------------
 
     def _parse_sections(self, fpath):
-        """Parse available sections from the style file.
+        """Parse available sections from the loaded style file.
 
-        ACTION REQUIRED: Implement actual parsing logic based on the
-        companion style file format. The current implementation provides
-        placeholder section names.
+        Queries the engine for which standard arranger roles are present
+        and builds the sections list from those found.
         """
-        # ACTION REQUIRED: Replace with real parsing from the LV2 plugin
-        # Example: self.sections = zyncompanion.get_sections(self.companion_handle)
-        self.sections = ["Intro", "Main A", "Main B", "Fill A", "Fill B", "Ending"]
-        self.current_section = self.sections[0] if self.sections else None
+        self.sections = []
+        roles = [
+            (zyncompanion.SECTION_INTRO, "Intro"),
+            (zyncompanion.SECTION_MAIN_A, "Main A"),
+            (zyncompanion.SECTION_MAIN_B, "Main B"),
+            (zyncompanion.SECTION_FILL, "Fill"),
+            (zyncompanion.SECTION_ENDING, "Ending"),
+        ]
+        for role, label in roles:
+            idx = zyncompanion.find_section_by_role(
+                self.companion_handle, role)
+            if idx >= 0:
+                self.sections.append(label)
+        if not self.sections:
+            # Fallback: file may have patterns but no arranger roles
+            self.sections = ["Pattern"]
+        self.current_section = self.sections[0]
 
     def _read_channel_instruments(self):
         """Read GM instrument assignments per style channel.
 
-        ACTION REQUIRED: Implement reading of GM instrument names from
-        the LV2 plugin after loading a style file.
+        Note: The current accompaniment engine library does not expose
+        per-channel program queries. This is a placeholder for when
+        that API becomes available.
         """
         self.channel_instruments = {}
-        # ACTION REQUIRED: Query the LV2 plugin for instrument assignments
-        # Example:
-        # for ch in range(COMPANION_NUM_CHANNELS):
-        #     prog = zyncompanion.get_channel_program(self.companion_handle, ch)
-        #     if prog >= 0:
-        #         self.channel_instruments[ch] = self.gm_program_name(prog)
 
     # ---------------------------------------------------------------------------
     # Controller Building
@@ -260,13 +270,16 @@ class zynthian_engine_companion(zynthian_engine):
         """Build controllers based on current style state."""
         section_labels = self.sections if self.sections else ["---"]
 
+        current_tempo = zyncompanion.get_tempo(self.companion_handle)
+
         self._ctrls = [
             ['transport', None, 0, ['stopped', 'playing']],
             ['section', None, 0, [str(i) + ": " + s for i, s in enumerate(section_labels)]],
+            ['tempo', None, int(current_tempo), [40, 240, int(current_tempo)]],
         ]
 
         self._ctrl_screens = [
-            ['Style', ['transport', 'section']]
+            ['Style', ['transport', 'section', 'tempo']]
         ]
 
     # ---------------------------------------------------------------------------
@@ -284,10 +297,13 @@ class zynthian_engine_companion(zynthian_engine):
         }
 
     def get_monitors_dict(self):
-        # ACTION REQUIRED: If the LV2 plugin provides real-time monitor
-        # ports, read them here to update playing state, position, etc.
-        # Example:
-        # self.monitors_dict['playing'] = zyncompanion.is_playing(self.companion_handle)
+        # Sync playback state from the engine
+        self.playing = zyncompanion.is_playing(self.companion_handle)
+        self.monitors_dict['playing'] = self.playing
+        self.monitors_dict['position'] = zyncompanion.get_position(
+            self.companion_handle)
+        self.monitors_dict['tempo'] = zyncompanion.get_tempo(
+            self.companion_handle)
         return self.monitors_dict
 
     # ---------------------------------------------------------------------------
