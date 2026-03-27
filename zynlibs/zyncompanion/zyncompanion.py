@@ -89,47 +89,65 @@ def init():
         return
 
     # --- Engine lifecycle ---
-    _lib.accompaniment_engine_create.restype = ctypes.c_void_p
+    # accompaniment_result_t accompaniment_engine_create(accompaniment_engine_t** engine)
+    _lib.accompaniment_engine_create.argtypes = [
+        ctypes.POINTER(ctypes.c_void_p)]
+    _lib.accompaniment_engine_create.restype = ctypes.c_int
 
+    # accompaniment_result_t accompaniment_engine_destroy(accompaniment_engine_t* engine)
     _lib.accompaniment_engine_destroy.argtypes = [ctypes.c_void_p]
-    _lib.accompaniment_engine_destroy.restype = None
+    _lib.accompaniment_engine_destroy.restype = ctypes.c_int
 
     # --- File management ---
+    # accompaniment_result_t accompaniment_file_load(engine*, const char*, accompaniment_file_t**)
     _lib.accompaniment_file_load.argtypes = [
-        ctypes.c_void_p, ctypes.c_char_p]
+        ctypes.c_void_p, ctypes.c_char_p,
+        ctypes.POINTER(ctypes.c_void_p)]
     _lib.accompaniment_file_load.restype = ctypes.c_int
 
+    # accompaniment_result_t accompaniment_file_unload(accompaniment_file_t*)
     _lib.accompaniment_file_unload.argtypes = [ctypes.c_void_p]
-    _lib.accompaniment_file_unload.restype = None
+    _lib.accompaniment_file_unload.restype = ctypes.c_int
 
     # --- Transport ---
-    _lib.accompaniment_play.argtypes = [ctypes.c_void_p]
+    # accompaniment_result_t accompaniment_play(engine*, accompaniment_file_t*)
+    _lib.accompaniment_play.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
     _lib.accompaniment_play.restype = ctypes.c_int
 
+    # accompaniment_result_t accompaniment_pause(engine*)
     _lib.accompaniment_pause.argtypes = [ctypes.c_void_p]
     _lib.accompaniment_pause.restype = ctypes.c_int
 
+    # accompaniment_result_t accompaniment_stop(engine*)
     _lib.accompaniment_stop.argtypes = [ctypes.c_void_p]
     _lib.accompaniment_stop.restype = ctypes.c_int
 
     # --- Tempo ---
+    # accompaniment_result_t accompaniment_set_tempo(engine*, float bpm)
     _lib.accompaniment_set_tempo.argtypes = [
         ctypes.c_void_p, ctypes.c_float]
     _lib.accompaniment_set_tempo.restype = ctypes.c_int
 
-    _lib.accompaniment_get_tempo.argtypes = [ctypes.c_void_p]
-    _lib.accompaniment_get_tempo.restype = ctypes.c_float
+    # accompaniment_result_t accompaniment_get_tempo(engine*, float* bpm)
+    _lib.accompaniment_get_tempo.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
+    _lib.accompaniment_get_tempo.restype = ctypes.c_int
 
     # --- Seek / Position ---
+    # accompaniment_result_t accompaniment_seek(engine*, uint32_t position_beats)
     _lib.accompaniment_seek.argtypes = [
-        ctypes.c_void_p, ctypes.c_float]
+        ctypes.c_void_p, ctypes.c_uint32]
     _lib.accompaniment_seek.restype = ctypes.c_int
 
-    _lib.accompaniment_get_position.argtypes = [ctypes.c_void_p]
-    _lib.accompaniment_get_position.restype = ctypes.c_float
+    # accompaniment_result_t accompaniment_get_position(engine*, uint32_t* position_beats)
+    _lib.accompaniment_get_position.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+    _lib.accompaniment_get_position.restype = ctypes.c_int
 
     # --- State ---
-    _lib.accompaniment_get_state.argtypes = [ctypes.c_void_p]
+    # accompaniment_result_t accompaniment_get_state(engine*, accompaniment_state_t* state)
+    _lib.accompaniment_get_state.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
     _lib.accompaniment_get_state.restype = ctypes.c_int
 
     # --- String helpers ---
@@ -140,19 +158,24 @@ def init():
     _lib.accompaniment_section_role_string.restype = ctypes.c_char_p
 
     # --- Arranger ---
+    # accompaniment_result_t accompaniment_validate_arranger_sections(const accompaniment_file_t*)
     _lib.accompaniment_validate_arranger_sections.argtypes = [
         ctypes.c_void_p]
     _lib.accompaniment_validate_arranger_sections.restype = ctypes.c_int
 
+    # result_t arranger_queue_section(arranger_state_t*, const accompaniment_file_t*, role)
     _lib.arranger_queue_section.argtypes = [
-        ctypes.c_void_p, ctypes.c_uint]
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
     _lib.arranger_queue_section.restype = ctypes.c_int
 
-    _lib.arranger_request_ending.argtypes = [ctypes.c_void_p]
+    # result_t arranger_request_ending(arranger_state_t*, const accompaniment_file_t*)
+    _lib.arranger_request_ending.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p]
     _lib.arranger_request_ending.restype = ctypes.c_int
 
+    # result_t arranger_find_section_by_role(const accompaniment_file_t*, role, uint32_t* index)
     _lib.arranger_find_section_by_role.argtypes = [
-        ctypes.c_void_p, ctypes.c_int]
+        ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_uint32)]
     _lib.arranger_find_section_by_role.restype = ctypes.c_int
 
     # --- Parser (file format detection) ---
@@ -182,8 +205,9 @@ def create_engine():
     """
     if not _lib:
         return None
-    handle = _lib.accompaniment_engine_create()
-    if not handle:
+    handle = ctypes.c_void_p()
+    result = _lib.accompaniment_engine_create(ctypes.byref(handle))
+    if result != RESULT_OK or not handle:
         logging.error("zyncompanion: failed to create engine")
         return None
     return handle
@@ -202,33 +226,37 @@ def destroy_engine(handle):
 def load_file(handle, filepath):
     """Load a style file (.sty or .sff).
 
-    Returns RESULT_OK (0) on success, or an error code.
+    Returns (result_code, file_handle) tuple.
+    result_code is RESULT_OK (0) on success.
+    file_handle is needed for play(), unload_file(), etc.
     """
     if not _lib or not handle:
-        return RESULT_NOT_INITIALISED
+        return RESULT_NOT_INITIALISED, None
+    file_handle = ctypes.c_void_p()
     result = _lib.accompaniment_file_load(
-        handle, filepath.encode("utf-8"))
+        handle, filepath.encode("utf-8"), ctypes.byref(file_handle))
     if result != RESULT_OK:
         msg = result_string(result)
         logging.warning(f"zyncompanion: load_file failed: {msg}")
-    return result
+        return result, None
+    return result, file_handle
 
 
-def unload_file(handle):
-    """Unload the currently loaded style file."""
-    if _lib and handle:
-        _lib.accompaniment_file_unload(handle)
+def unload_file(file_handle):
+    """Unload a previously loaded style file."""
+    if _lib and file_handle:
+        _lib.accompaniment_file_unload(file_handle)
 
 
 # ---------------------------------------------------------------------------
 # Transport
 # ---------------------------------------------------------------------------
 
-def play(handle):
+def play(handle, file_handle):
     """Start playback. Returns result code."""
-    if not _lib or not handle:
+    if not _lib or not handle or not file_handle:
         return RESULT_NOT_INITIALISED
-    return _lib.accompaniment_play(handle)
+    return _lib.accompaniment_play(handle, file_handle)
 
 
 def pause(handle):
@@ -260,7 +288,11 @@ def get_tempo(handle):
     """Get the current tempo in BPM."""
     if not _lib or not handle:
         return 120.0
-    return _lib.accompaniment_get_tempo(handle)
+    bpm = ctypes.c_float()
+    result = _lib.accompaniment_get_tempo(handle, ctypes.byref(bpm))
+    if result != RESULT_OK:
+        return 120.0
+    return bpm.value
 
 
 # ---------------------------------------------------------------------------
@@ -271,14 +303,18 @@ def seek(handle, beat):
     """Seek to a beat position. Returns result code."""
     if not _lib or not handle:
         return RESULT_NOT_INITIALISED
-    return _lib.accompaniment_seek(handle, ctypes.c_float(beat))
+    return _lib.accompaniment_seek(handle, ctypes.c_uint32(int(beat)))
 
 
 def get_position(handle):
     """Get the current playback position in beats."""
     if not _lib or not handle:
-        return 0.0
-    return _lib.accompaniment_get_position(handle)
+        return 0
+    pos = ctypes.c_uint32()
+    result = _lib.accompaniment_get_position(handle, ctypes.byref(pos))
+    if result != RESULT_OK:
+        return 0
+    return pos.value
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +325,11 @@ def get_state(handle):
     """Get the engine state (STATE_STOPPED, STATE_PLAYING, STATE_PAUSED)."""
     if not _lib or not handle:
         return STATE_STOPPED
-    return _lib.accompaniment_get_state(handle)
+    state = ctypes.c_int()
+    result = _lib.accompaniment_get_state(handle, ctypes.byref(state))
+    if result != RESULT_OK:
+        return STATE_STOPPED
+    return state.value
 
 
 def is_playing(handle):
@@ -321,38 +361,42 @@ def section_role_string(role):
 # Arranger
 # ---------------------------------------------------------------------------
 
-def validate_arranger_sections(handle):
+def validate_arranger_sections(file_handle):
     """Validate that the loaded file has the required arranger sections.
 
     Returns RESULT_OK if valid, or an error code.
     """
-    if not _lib or not handle:
+    if not _lib or not file_handle:
         return RESULT_NOT_INITIALISED
-    return _lib.accompaniment_validate_arranger_sections(handle)
+    return _lib.accompaniment_validate_arranger_sections(file_handle)
 
 
-def queue_section(handle, section_index):
-    """Queue a section by index for the arranger to transition to."""
-    if not _lib or not handle:
+def queue_section(arranger_handle, file_handle, role):
+    """Queue a section role for the arranger to transition to."""
+    if not _lib or not arranger_handle or not file_handle:
         return RESULT_NOT_INITIALISED
-    return _lib.arranger_queue_section(handle, section_index)
+    return _lib.arranger_queue_section(arranger_handle, file_handle, role)
 
 
-def request_ending(handle):
+def request_ending(arranger_handle, file_handle):
     """Request the arranger to transition to the ending section."""
-    if not _lib or not handle:
+    if not _lib or not arranger_handle or not file_handle:
         return RESULT_NOT_INITIALISED
-    return _lib.arranger_request_ending(handle)
+    return _lib.arranger_request_ending(arranger_handle, file_handle)
 
 
-def find_section_by_role(handle, role):
+def find_section_by_role(file_handle, role):
     """Find a section index by its role (SECTION_INTRO, SECTION_MAIN_A, etc.).
 
     Returns the section index or -1 if not found.
     """
-    if not _lib or not handle:
+    if not _lib or not file_handle:
         return -1
-    return _lib.arranger_find_section_by_role(handle, role)
+    index = ctypes.c_uint32()
+    result = _lib.arranger_find_section_by_role(file_handle, role, ctypes.byref(index))
+    if result != RESULT_OK:
+        return -1
+    return index.value
 
 
 # ---------------------------------------------------------------------------

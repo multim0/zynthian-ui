@@ -2,7 +2,7 @@
 # ******************************************************************************
 # ZYNTHIAN PROJECT: Zynthian Engine (zynthian_engine_companion)
 #
-# zynthian_engine implementation for Companion Style Player LV2 plugin
+# zynthian_engine implementation for Companion Style Player
 #
 # Copyright (C) 2024-2026 Zynthian Community
 #
@@ -26,14 +26,30 @@ import os
 import logging
 
 from zyngine.zynthian_engine import zynthian_engine
-from zyngine.zynthian_controller import zynthian_controller
 from zynlibs.zyncompanion import zyncompanion
 
+# LV2 plugin URI
 COMPANION_LV2_URI = "http://zynthian-companion.local/accompaniment-engine#lv2"
 
-# Number of style channels supported by the companion plugin
-# Most styles use only 8 channels + 10th channel for drums, but some may use more. Set to 16 for safety.
-COMPANION_NUM_CHANNELS = 16
+# LV2 control port values
+PLAY_STOP = 0
+PLAY_PAUSE = 1
+PLAY_PLAY = 2
+
+SECTION_INTRO = 0
+SECTION_MAIN_A = 1
+SECTION_MAIN_B = 2
+SECTION_FILL = 3
+SECTION_ENDING = 4
+
+# Map section names to LV2 section_select port values
+SECTION_VALUES = {
+    "Intro": SECTION_INTRO,
+    "Main A": SECTION_MAIN_A,
+    "Main B": SECTION_MAIN_B,
+    "Fill": SECTION_FILL,
+    "Ending": SECTION_ENDING,
+}
 
 # ------------------------------------------------------------------------------
 # Companion Style Player Engine Class
@@ -70,6 +86,7 @@ class zynthian_engine_companion(zynthian_engine):
         self.name = "CompanionStylePlayer"
         self.nickname = "CP"
         self.type = "MIDI Tool"
+        self.jackname = "zynthian-accompaniment"
         self.custom_gui_fpath = os.environ.get(
             'ZYNTHIAN_UI_DIR',
             "/zynthian/zynthian-ui"
@@ -77,24 +94,26 @@ class zynthian_engine_companion(zynthian_engine):
 
         self.options['replace'] = False
 
+        # jalv subprocess setup
+        self.command = "jalv -n {} {}".format(self.jackname, COMPANION_LV2_URI)
+        self.command_prompt = ">"
+
         # Current style state
         self.style_file = None
         self.sections = []
         self.current_section = None
         self.playing = False
+        self.current_tempo = 120.0
 
         # GM instruments per channel (populated after loading a style)
-        # comment
         self.channel_instruments = {}
 
         # Monitors dict for widget updates
         self.monitors_dict = {}
         self._update_monitors()
 
-        # Create the accompaniment engine instance
-        self.companion_handle = zyncompanion.create_engine()
-        if not self.companion_handle:
-            logging.error("Companion: Failed to create accompaniment engine")
+        # Start jalv hosting the LV2 plugin
+        self.start()
 
     # ---------------------------------------------------------------------------
     # Processor Management
@@ -108,10 +127,25 @@ class zynthian_engine_companion(zynthian_engine):
     # ---------------------------------------------------------------------------
 
     def get_bank_list(self, processor=None):
-        return self.get_bank_dirlist(
-            self.preset_fexts,
-            self.root_bank_dirs
-        )
+        banks = []
+        for source_name, root_dir in self.root_bank_dirs:
+            if not os.path.isdir(root_dir):
+                continue
+            source_banks = []
+            # Check if root dir itself has style files
+            has_root_files = self.find_some_preset_file(root_dir, self.preset_fexts, recursion=0)
+            if has_root_files:
+                source_banks.append([root_dir, None, source_name, None, os.path.basename(root_dir)])
+            # Also add subdirectories that contain style files
+            try:
+                for d in sorted(os.listdir(root_dir)):
+                    dpath = os.path.join(root_dir, d)
+                    if os.path.isdir(dpath) and self.find_some_preset_file(dpath, self.preset_fexts, recursion=1):
+                        source_banks.append([dpath, None, d, None, d])
+            except OSError:
+                pass
+            banks.extend(source_banks)
+        return banks
 
     def set_bank(self, processor, bank):
         return True
@@ -143,18 +177,16 @@ class zynthian_engine_companion(zynthian_engine):
         self.style_file = fpath
         logging.info(f"Companion: Loading style file '{fpath}'")
 
-        # Load the style file via the accompaniment engine
-        result = zyncompanion.load_file(self.companion_handle, fpath)
-        if result != zyncompanion.RESULT_OK:
-            logging.error(f"Companion: Failed to load style file: {zyncompanion.result_string(result)}")
-            self.style_file = None
-            return False
+        # Stop playback before changing files
+        if self.playing:
+            self.stop_playing()
 
-        # Parse sections from the style file
+        # Parse sections using zyncompanion library (ctypes, for metadata only)
         self._parse_sections(fpath)
 
-        # Read GM instrument assignments per channel
-        self._read_channel_instruments()
+        # Load style file into the LV2 plugin via jalv's set command
+        # jalv forges a patch:Set atom and delivers it to control_in
+        self.proc_cmd("set styleFile {}".format(fpath))
 
         # Build dynamic controllers after loading
         self._build_controllers()
@@ -190,40 +222,50 @@ class zynthian_engine_companion(zynthian_engine):
             section_idx = int(zctrl.value)
             self.select_section(section_idx)
         elif zctrl.symbol == "tempo":
-            zyncompanion.set_tempo(self.companion_handle, float(zctrl.value))
+            self._set_tempo(float(zctrl.value))
             self._update_monitors()
 
     # ---------------------------------------------------------------------------
-    # Transport Controls
+    # Transport Controls (via jalv LV2 control ports)
     # ---------------------------------------------------------------------------
 
     def start_playing(self):
-        """Start playing the current style section."""
-        if not self.style_file:
-            logging.warning("Companion: No style file loaded")
+        if not self.proc or not self.style_file:
+            logging.warning("Companion: No style file loaded or process not running")
             return
-        result = zyncompanion.play(self.companion_handle)
-        if result == zyncompanion.RESULT_OK:
-            self.playing = True
-            logging.info("Companion: Start playing")
-        else:
-            logging.warning(f"Companion: Play failed: {zyncompanion.result_string(result)}")
+        self.proc_cmd("set play {}".format(PLAY_PLAY))
+        self.playing = True
+        logging.info("Companion: Start playing")
         self._update_monitors()
 
     def stop_playing(self):
-        """Stop playing the current style."""
-        zyncompanion.stop(self.companion_handle)
+        if not self.proc:
+            return
+        self.proc_cmd("set play {}".format(PLAY_STOP))
         self.playing = False
         logging.info("Companion: Stop playing")
         self._update_monitors()
 
     def select_section(self, section_idx):
-        """Select a section of the current style to play."""
+        if not self.proc:
+            return
         if 0 <= section_idx < len(self.sections):
-            self.current_section = self.sections[section_idx]
-            logging.info(f"Companion: Selected section '{self.current_section}'")
-            zyncompanion.queue_section(self.companion_handle, section_idx)
+            section_name = self.sections[section_idx]
+            value = SECTION_VALUES.get(section_name)
+            if value is not None:
+                self.proc_cmd("set section_select {}".format(value))
+                self.current_section = section_name
+                logging.info(f"Companion: Selected section '{section_name}'")
+            else:
+                logging.warning(f"Companion: Unknown section '{section_name}'")
             self._update_monitors()
+
+    def _set_tempo(self, bpm):
+        if not self.proc:
+            return
+        bpm = max(40.0, min(240.0, float(bpm)))
+        self.proc_cmd("set tempo {:.1f}".format(bpm))
+        self.current_tempo = bpm
 
     # ---------------------------------------------------------------------------
     # Style Parsing
@@ -232,10 +274,24 @@ class zynthian_engine_companion(zynthian_engine):
     def _parse_sections(self, fpath):
         """Parse available sections from the loaded style file.
 
-        Queries the engine for which standard arranger roles are present
-        and builds the sections list from those found.
+        Uses the zyncompanion ctypes library to detect which arranger
+        sections are present, without needing JACK output.
         """
         self.sections = []
+        # Use zyncompanion for metadata parsing
+        temp_handle = zyncompanion.create_engine()
+        if not temp_handle:
+            self.sections = ["Pattern"]
+            self.current_section = self.sections[0]
+            return
+
+        result, file_handle = zyncompanion.load_file(temp_handle, fpath)
+        if result != zyncompanion.RESULT_OK:
+            zyncompanion.destroy_engine(temp_handle)
+            self.sections = ["Pattern"]
+            self.current_section = self.sections[0]
+            return
+
         roles = [
             (zyncompanion.SECTION_INTRO, "Intro"),
             (zyncompanion.SECTION_MAIN_A, "Main A"),
@@ -244,23 +300,21 @@ class zynthian_engine_companion(zynthian_engine):
             (zyncompanion.SECTION_ENDING, "Ending"),
         ]
         for role, label in roles:
-            idx = zyncompanion.find_section_by_role(
-                self.companion_handle, role)
+            idx = zyncompanion.find_section_by_role(file_handle, role)
             if idx >= 0:
                 self.sections.append(label)
+
+        # Get tempo from the file
+        self.current_tempo = zyncompanion.get_tempo(temp_handle)
+        if self.current_tempo <= 0:
+            self.current_tempo = 120.0
+
+        zyncompanion.unload_file(file_handle)
+        zyncompanion.destroy_engine(temp_handle)
+
         if not self.sections:
-            # Fallback: file may have patterns but no arranger roles
             self.sections = ["Pattern"]
         self.current_section = self.sections[0]
-
-    def _read_channel_instruments(self):
-        """Read GM instrument assignments per style channel.
-
-        Note: The current accompaniment engine library does not expose
-        per-channel program queries. This is a placeholder for when
-        that API becomes available.
-        """
-        self.channel_instruments = {}
 
     # ---------------------------------------------------------------------------
     # Controller Building
@@ -270,12 +324,10 @@ class zynthian_engine_companion(zynthian_engine):
         """Build controllers based on current style state."""
         section_labels = self.sections if self.sections else ["---"]
 
-        current_tempo = zyncompanion.get_tempo(self.companion_handle)
-
         self._ctrls = [
             ['transport', None, 0, ['stopped', 'playing']],
             ['section', None, 0, [str(i) + ": " + s for i, s in enumerate(section_labels)]],
-            ['tempo', None, int(current_tempo), [40, 240, int(current_tempo)]],
+            ['tempo', {'value': int(self.current_tempo), 'value_min': 40, 'value_max': 240, 'is_integer': True}],
         ]
 
         self._ctrl_screens = [
@@ -294,16 +346,13 @@ class zynthian_engine_companion(zynthian_engine):
             'current_section': self.current_section or "",
             'playing': self.playing,
             'channel_instruments': dict(self.channel_instruments),
+            'tempo': self.current_tempo,
+            'position': 0,
         }
 
     def get_monitors_dict(self):
-        # Sync playback state from the engine
-        self.playing = zyncompanion.is_playing(self.companion_handle)
         self.monitors_dict['playing'] = self.playing
-        self.monitors_dict['position'] = zyncompanion.get_position(
-            self.companion_handle)
-        self.monitors_dict['tempo'] = zyncompanion.get_tempo(
-            self.companion_handle)
+        self.monitors_dict['tempo'] = self.current_tempo
         return self.monitors_dict
 
     # ---------------------------------------------------------------------------
