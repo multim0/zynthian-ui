@@ -51,6 +51,9 @@ SECTION_VALUES = {
     "Ending": SECTION_ENDING,
 }
 
+# Path file for file-load trigger (plugin reads this on trigger change)
+LOAD_FILE_PATH = "/tmp/.companion_style_path"
+
 # ------------------------------------------------------------------------------
 # Companion Style Player Engine Class
 # ------------------------------------------------------------------------------
@@ -108,12 +111,35 @@ class zynthian_engine_companion(zynthian_engine):
         # GM instruments per channel (populated after loading a style)
         self.channel_instruments = {}
 
+        # File-load trigger counter (bumped to signal plugin)
+        self.load_file_trigger = 0
+
         # Monitors dict for widget updates
         self.monitors_dict = {}
         self._update_monitors()
 
         # Start jalv hosting the LV2 plugin
         self.start()
+
+    def proc_cmd(self, cmd):
+        """Send command to jalv without waiting for prompt response.
+
+        The base class uses pexpect.expect(">") which falsely matches
+        on jalv monitor lines like '#MON> symbol=value', causing prompt
+        desynchronization and timeouts. Since companion set commands are
+        fire-and-forget, we just write and move on.
+        """
+        if self.proc:
+            if not self.proc.isalive():
+                logging.error("Companion: jalv process has died, attempting restart")
+                self.proc = None
+                self.start()
+                if not self.proc:
+                    return
+            try:
+                self.proc.sendline(cmd)
+            except Exception as err:
+                logging.error(f"Can't exec engine command: {cmd} => {err}")
 
     # ---------------------------------------------------------------------------
     # Processor Management
@@ -184,9 +210,16 @@ class zynthian_engine_companion(zynthian_engine):
         # Parse sections using zyncompanion library (ctypes, for metadata only)
         self._parse_sections(fpath)
 
-        # Load style file into the LV2 plugin via jalv's set command
-        # jalv forges a patch:Set atom and delivers it to control_in
-        self.proc_cmd("set styleFile {}".format(fpath))
+        # Load style file into the LV2 plugin via file-trigger mechanism:
+        # Write path to tmpfs file, then bump load_file_trigger control port
+        try:
+            with open(LOAD_FILE_PATH, 'w') as f:
+                f.write(fpath)
+        except OSError as err:
+            logging.error(f"Companion: Can't write style path file: {err}")
+            return False
+        self.load_file_trigger = (self.load_file_trigger + 1) % 9999
+        self.proc_cmd("set load_file_trigger {}".format(self.load_file_trigger))
 
         # Build dynamic controllers after loading
         self._build_controllers()

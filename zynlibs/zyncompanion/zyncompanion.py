@@ -75,7 +75,7 @@ SECTION_ROLE_NAMES = {
 _lib = None
 
 # Path to the accompaniment shared library
-_LIB_PATH = "/zynthian/zynthian-plugins/lv2/zynthian-companion.lv2/accompaniment_lv2.so"
+_LIB_PATH = "/usr/lib/lv2/zynthian-accompaniment.lv2/accompaniment_lv2.so"
 
 
 def init():
