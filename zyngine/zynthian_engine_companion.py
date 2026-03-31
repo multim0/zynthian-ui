@@ -246,8 +246,9 @@ class zynthian_engine_companion(zynthian_engine):
         return super().get_controllers_dict(processor)
 
     def send_controller_value(self, zctrl):
+        logging.debug(f"Companion: send_controller_value symbol={zctrl.symbol} value={zctrl.value!r} type={type(zctrl.value).__name__}")
         if zctrl.symbol == "transport":
-            if zctrl.value == 1:
+            if zctrl.value >= 1:
                 self.start_playing()
             else:
                 self.stop_playing()
