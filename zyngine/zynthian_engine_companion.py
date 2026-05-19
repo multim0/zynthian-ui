@@ -24,6 +24,8 @@
 
 import os
 import logging
+from threading import Thread
+from subprocess import Popen, PIPE, STDOUT
 
 from zyngine.zynthian_engine import zynthian_engine
 from zynlibs.zyncompanion import zyncompanion
@@ -74,6 +76,18 @@ class zynthian_engine_companion(zynthian_engine):
         ('System Styles', zynthian_engine.data_dir + "/styles")
     ]
 
+    NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    CHORD_QUALITY_SUFFIX = {
+        0: "",
+        1: "m",
+        2: "7",
+        3: "m7",
+        4: "maj7",
+        5: "sus4",
+        6: "dim",
+        7: "aug",
+    }
+
     # Standard MIDI Controllers
     _ctrls = []
 
@@ -98,8 +112,9 @@ class zynthian_engine_companion(zynthian_engine):
         self.options['replace'] = False
 
         # jalv subprocess setup
-        self.command = "jalv -n {} {}".format(self.jackname, COMPANION_LV2_URI)
+        self.command = ["jalv", "-n", self.jackname, COMPANION_LV2_URI]
         self.command_prompt = ">"
+        self.proc_poll_thread = None
 
         # Current style state
         self.style_file = None
@@ -107,6 +122,9 @@ class zynthian_engine_companion(zynthian_engine):
         self.current_section = None
         self.playing = False
         self.current_tempo = 120.0
+        self.current_chord_root = None
+        self.current_chord_quality = None
+        self.current_chord = ""
 
         # GM instruments per channel (populated after loading a style)
         self.channel_instruments = {}
@@ -121,6 +139,120 @@ class zynthian_engine_companion(zynthian_engine):
         # Start jalv hosting the LV2 plugin
         self.start()
 
+    def start(self):
+        if not self.proc:
+            logging.info("Starting Engine {}".format(self.name))
+            try:
+                self.osc_init()
+                self.proc_exit = False
+                if self.command_cwd:
+                    self.command_env['PWD'] = self.command_cwd
+                self.proc = Popen(
+                    self.command,
+                    env=self.command_env,
+                    cwd=self.command_cwd,
+                    shell=False,
+                    text=True,
+                    bufsize=1,
+                    stdout=PIPE,
+                    stderr=STDOUT,
+                    stdin=PIPE,
+                )
+                self.proc_get_output()
+                self.start_proc_poll_thread()
+            except Exception as err:
+                logging.error("Can't start engine {} => {}".format(self.name, err))
+
+    def stop(self):
+        if self.proc:
+            try:
+                logging.info("Stopping Engine " + self.name)
+                self.proc_exit = True
+                try:
+                    self.proc.stdin.writelines(["\n"])
+                except Exception:
+                    pass
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=5)
+                except Exception:
+                    self.proc.kill()
+                self.proc = None
+            except Exception as err:
+                logging.error(f"Can't stop engine {self.name} => {err}")
+            finally:
+                self.osc_end()
+
+    def proc_get_output(self):
+        if not self.proc:
+            return None
+        res = ""
+        while not self.proc_exit and self.proc:
+            line = self.proc.stdout.readline().strip()
+            if line == self.command_prompt:
+                break
+            elif line:
+                res += line
+        return res
+
+    def start_proc_poll_thread(self):
+        self.proc_poll_thread = Thread(target=self.proc_poll_thread_task, args=())
+        self.proc_poll_thread.name = f"proc_poll_{self.jackname}"
+        self.proc_poll_thread.daemon = True
+        self.proc_poll_thread.start()
+
+    def proc_poll_thread_task(self):
+        while self.proc and not self.proc_exit:
+            line = self.proc.stdout.readline().strip()
+            if line:
+                self.proc_poll_parse_line(line)
+
+    def proc_poll_parse_line(self, line):
+        match line[0:5]:
+            case "#CTR>":
+                self._parse_feedback_value(line[6:])
+            case "#MON>":
+                self._parse_feedback_value(line[6:])
+            case _:
+                if line == self.command_prompt:
+                    return
+                logging.debug(f"Companion jalv > {line}")
+
+    def _parse_feedback_value(self, line):
+        parts = line.split("=", maxsplit=1)
+        if len(parts) != 2:
+            return
+        symparts = parts[0].split("#", maxsplit=1)
+        symbol = symparts[1] if len(symparts) == 2 else symparts[0]
+        try:
+            value = float(parts[1])
+        except Exception:
+            return
+
+        if symbol.startswith("ch") and symbol.endswith("_program"):
+            ch_text = symbol[2:-8]
+            try:
+                ch = int(ch_text) - 1
+            except ValueError:
+                return
+            if 0 <= ch < 16:
+                gm = int(max(0, min(127, round(value))))
+                self.channel_instruments[ch] = self.gm_program_name(gm)
+                self._update_monitors()
+            return
+
+        if symbol == "chord_root":
+            self.current_chord_root = int(max(0, min(127, round(value))))
+            self.current_chord = self._format_chord(self.current_chord_root, self.current_chord_quality)
+            self._update_monitors()
+            return
+
+        if symbol == "chord_quality":
+            quality = int(round(value))
+            self.current_chord_quality = quality if quality in self.CHORD_QUALITY_SUFFIX else None
+            self.current_chord = self._format_chord(self.current_chord_root, self.current_chord_quality)
+            self._update_monitors()
+
     def proc_cmd(self, cmd):
         """Send command to jalv without waiting for prompt response.
 
@@ -130,14 +262,14 @@ class zynthian_engine_companion(zynthian_engine):
         fire-and-forget, we just write and move on.
         """
         if self.proc:
-            if not self.proc.isalive():
+            if self.proc.poll() is not None:
                 logging.error("Companion: jalv process has died, attempting restart")
                 self.proc = None
                 self.start()
                 if not self.proc:
                     return
             try:
-                self.proc.sendline(cmd)
+                self.proc.stdin.writelines([cmd + "\n"])
             except Exception as err:
                 logging.error(f"Can't exec engine command: {cmd} => {err}")
 
@@ -202,6 +334,10 @@ class zynthian_engine_companion(zynthian_engine):
 
         self.style_file = fpath
         logging.info(f"Companion: Loading style file '{fpath}'")
+        self.channel_instruments = {}
+        self.current_chord_root = None
+        self.current_chord_quality = None
+        self.current_chord = ""
 
         # Stop playback before changing files
         if self.playing:
@@ -380,14 +516,27 @@ class zynthian_engine_companion(zynthian_engine):
             'current_section': self.current_section or "",
             'playing': self.playing,
             'channel_instruments': dict(self.channel_instruments),
+            'detected_chord': self.current_chord,
             'tempo': self.current_tempo,
             'position': 0,
         }
 
     def get_monitors_dict(self):
+        if self.proc:
+            self.proc_cmd("controls")
+            self.proc_cmd("monitors")
         self.monitors_dict['playing'] = self.playing
         self.monitors_dict['tempo'] = self.current_tempo
+        self.monitors_dict['detected_chord'] = self.current_chord
         return self.monitors_dict
+
+    @classmethod
+    def _format_chord(cls, root, quality):
+        if root is None or quality is None:
+            return ""
+        note = cls.NOTE_NAMES[int(root) % 12]
+        suffix = cls.CHORD_QUALITY_SUFFIX.get(quality, "")
+        return f"{note}{suffix}"
 
     # ---------------------------------------------------------------------------
     # GM Program Names

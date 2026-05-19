@@ -44,6 +44,8 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
     COLOR_SECTION_NORMAL = "#808080"
     COLOR_CHANNEL_TEXT = "#B0B0B0"
     COLOR_INSTRUMENT_TEXT = "#E0E0E0"
+    COLOR_CHORD_BOX = "#2E3E2E"
+    COLOR_CHORD_TEXT = "#E8FF9E"
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -53,6 +55,7 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
         self.current_section = ""
         self.playing = False
         self.channel_instruments = {}
+        self.detected_chord = ""
         self.section_items = []
         self.channel_items = []
 
@@ -85,6 +88,27 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
             font=(zynthian_gui_config.font_family, 9),
             fill=zynthian_gui_config.color_panel_tx,
             text="STOPPED"
+        )
+
+        self.chord_header = self.widget_canvas.create_text(
+            0, 0,
+            anchor=tkinter.NW,
+            font=(zynthian_gui_config.font_family, 8),
+            fill=zynthian_gui_config.color_tx_off,
+            text="DETECTED CHORD"
+        )
+        self.chord_box = self.widget_canvas.create_rectangle(
+            0, 0, 10, 10,
+            fill=self.COLOR_CHORD_BOX,
+            outline=zynthian_gui_config.color_tx_off,
+            width=1
+        )
+        self.chord_text = self.widget_canvas.create_text(
+            0, 0,
+            anchor=tkinter.CENTER,
+            font=(zynthian_gui_config.font_family, 12, "bold"),
+            fill=self.COLOR_CHORD_TEXT,
+            text="--"
         )
 
         # Sections header
@@ -122,6 +146,7 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
         fs_status = max(7, w // 32)
         fs_header = max(6, w // 38)
         fs_item = max(6, w // 36)
+        fs_chord = max(10, w // 22)
 
         y = pad
 
@@ -141,6 +166,18 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
         self.widget_canvas.itemconfigure(self.transport_text,
             font=(zynthian_gui_config.font_family, fs_status))
         y += indicator_size + pad + 2
+
+        # Chord display
+        self.widget_canvas.coords(self.chord_header, pad, y)
+        self.widget_canvas.itemconfigure(self.chord_header,
+            font=(zynthian_gui_config.font_family, fs_header))
+        y += fs_header + 2
+        chord_h = fs_chord + pad * 2
+        self.widget_canvas.coords(self.chord_box, pad, y, w - pad, y + chord_h)
+        self.widget_canvas.coords(self.chord_text, w // 2, y + chord_h // 2)
+        self.widget_canvas.itemconfigure(self.chord_text,
+            font=(zynthian_gui_config.font_family, fs_chord, "bold"))
+        y += chord_h + pad
 
         # Sections header
         self.widget_canvas.coords(self.sections_header, pad, y)
@@ -255,6 +292,11 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
                 self.channel_instruments = new_instruments
                 changed = True
 
+            new_chord = self.monitors.get('detected_chord', "")
+            if new_chord != self.detected_chord:
+                self.detected_chord = new_chord
+                changed = True
+
             if changed:
                 self._update_display()
         except Exception as e:
@@ -272,6 +314,7 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
                 self.current_section = monitors.get('current_section', "")
                 self.playing = monitors.get('playing', False)
                 self.channel_instruments = monitors.get('channel_instruments', {})
+                self.detected_chord = monitors.get('detected_chord', "")
 
     def _update_display(self):
         """Update displayed text and indicators."""
@@ -290,6 +333,12 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
                 fill=self.COLOR_STOPPED)
             self.widget_canvas.itemconfigure(self.transport_text,
                 text="STOPPED")
+
+        # Update detected chord
+        self.widget_canvas.itemconfigure(
+            self.chord_text,
+            text=self.detected_chord if self.detected_chord else "--"
+        )
 
         # Rebuild sections and channels
         self._layout()
