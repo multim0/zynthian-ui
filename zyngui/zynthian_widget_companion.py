@@ -177,7 +177,6 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
     def _layout_performance(self, top, bottom, left, width):
         content_h = max(1, bottom - top)
         gap = max(6, min(width, content_h) // 60)
-        fs_button = max(10, width // 45)
         fs_status = max(8, width // 50)
 
         # Three equal-height rows: controls, sections row 1, sections row 2.
@@ -188,18 +187,9 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
         available_w = width - 2 * left
         col_w = (available_w - 3 * inner_gap) // 4
 
-        # Layout (left→right): [Status: 2 cols] [Stop: 1 col] [Play: 1 col]
+        # Status box spans full width. Transport is controlled by the hardware knob.
         status_x1 = left
-        status_x2 = left + 2 * col_w + inner_gap
-        stop_x1 = status_x2 + inner_gap
-        stop_x2 = stop_x1 + col_w
-        play_x1 = stop_x2 + inner_gap
-        play_x2 = play_x1 + col_w
-
-        self._draw_action_button(play_x1, top, play_x2 - play_x1, row_h, "PLAY", self.COLOR_PLAYING, self.on_play_click, fs_button)
-        self._draw_action_button(stop_x1, top, stop_x2 - stop_x1, row_h, "STOP", self.COLOR_STOPPED, self.on_stop_click, fs_button)
-
-        # Status box spans left 2 columns.
+        status_x2 = left + (4 * col_w) + (3 * inner_gap)
         self.widget_canvas.create_rectangle(
             status_x1, top, status_x2, top + row_h,
             fill=self.COLOR_STATUS_BOX,
@@ -212,34 +202,34 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
         status_color = self.COLOR_PLAYING if self.playing else self.COLOR_STOPPED
         chord = self.detected_chord if self.detected_chord else None
         mid_x = (status_x1 + status_x2) // 2
-        # Left half: play icon + status text.
+        status_pad = max(10, available_w // 40)
+        left_x1 = status_x1 + status_pad
+        left_x2 = mid_x - status_pad
+        right_x1 = mid_x + status_pad
+        right_x2 = status_x2 - status_pad
+
+        # Left region: playback state with symmetric horizontal margins.
         self.widget_canvas.create_text(
-            status_x1 + 10,
+            (left_x1 + left_x2) // 2,
             top + row_h // 2,
             anchor=tkinter.CENTER,
             font=(zynthian_gui_config.font_family, fs_status + 1, "bold"),
             fill=status_color,
-            text=status_icon,
+            text=f"{status_icon} {status_text}",
+            width=max(12, left_x2 - left_x1),
             tags="dynamic"
         )
-        self.widget_canvas.create_text(
-            status_x1 + 22,
-            top + row_h // 2,
-            anchor=tkinter.W,
-            font=(zynthian_gui_config.font_family, fs_status, "bold"),
-            fill=self.COLOR_STATUS_TEXT,
-            text=status_text,
-            tags="dynamic"
-        )
-        # Right half: chord name, larger font.
+
+        # Right region: chord name with symmetric horizontal margins.
         if chord:
             self.widget_canvas.create_text(
-                (mid_x + status_x2) // 2,
+                (right_x1 + right_x2) // 2,
                 top + row_h // 2,
                 anchor=tkinter.CENTER,
                 font=(zynthian_gui_config.font_family, fs_status + 4, "bold"),
                 fill=self.COLOR_CHORD_TEXT,
                 text=chord,
+                width=max(12, right_x2 - right_x1),
                 tags="dynamic"
             )
 
