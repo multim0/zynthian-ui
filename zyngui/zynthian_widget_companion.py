@@ -179,7 +179,7 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
         gap = max(6, min(width, content_h) // 60)
         fs_status = max(8, width // 50)
 
-        # Three equal-height rows: controls, sections row 1, sections row 2.
+        # Three equal-height rows: status, sections row 1, sections row 2.
         row_h = max(36, (content_h - 2 * gap) // 3)
 
         # Match section grid geometry exactly: 4 cols, inner_gap between each.

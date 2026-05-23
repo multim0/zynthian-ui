@@ -38,6 +38,10 @@ PLAY_STOP = 0
 PLAY_PAUSE = 1
 PLAY_PLAY = 2
 
+CHORD_GATE_OFF = 0
+CHORD_GATE_DRUMS_ONLY = 1
+CHORD_GATE_SYNC_START = 2
+
 SECTION_INTRO = 0
 SECTION_MAIN_A = 1
 SECTION_MAIN_B = 2
@@ -125,6 +129,8 @@ class zynthian_engine_companion(zynthian_engine):
         self.current_chord_root = None
         self.current_chord_quality = None
         self.current_chord = ""
+        self.current_chord_valid = False
+        self.chord_gate_mode = CHORD_GATE_DRUMS_ONLY
 
         # GM instruments per channel (populated after loading a style)
         self.channel_instruments = {}
@@ -243,15 +249,35 @@ class zynthian_engine_companion(zynthian_engine):
 
         if symbol == "chord_root":
             self.current_chord_root = int(max(0, min(127, round(value))))
-            self.current_chord = self._format_chord(self.current_chord_root, self.current_chord_quality)
+            if self.current_chord_valid:
+                self.current_chord = self._format_chord(self.current_chord_root, self.current_chord_quality)
             self._update_monitors()
             return
 
         if symbol == "chord_quality":
             quality = int(round(value))
             self.current_chord_quality = quality if quality in self.CHORD_QUALITY_SUFFIX else None
-            self.current_chord = self._format_chord(self.current_chord_root, self.current_chord_quality)
+            if self.current_chord_valid:
+                self.current_chord = self._format_chord(self.current_chord_root, self.current_chord_quality)
             self._update_monitors()
+            return
+
+        if symbol == "chord_valid":
+            self.current_chord_valid = bool(int(round(value)))
+            if self.current_chord_valid:
+                self.current_chord = self._format_chord(self.current_chord_root, self.current_chord_quality)
+            else:
+                self.current_chord_root = None
+                self.current_chord_quality = None
+                self.current_chord = ""
+            self._update_monitors()
+            return
+
+        if symbol == "chord_gate_mode":
+            mode = self._normalize_chord_gate_mode_feedback(int(round(value)))
+            if mode in (CHORD_GATE_DRUMS_ONLY, CHORD_GATE_SYNC_START):
+                self.chord_gate_mode = mode
+                self._update_monitors()
 
     def proc_cmd(self, cmd):
         """Send command to jalv without waiting for prompt response.
@@ -338,6 +364,7 @@ class zynthian_engine_companion(zynthian_engine):
         self.current_chord_root = None
         self.current_chord_quality = None
         self.current_chord = ""
+        self.current_chord_valid = False
 
         # Stop playback before changing files
         if self.playing:
@@ -394,6 +421,9 @@ class zynthian_engine_companion(zynthian_engine):
         elif zctrl.symbol == "tempo":
             self._set_tempo(float(zctrl.value))
             self._update_monitors()
+        elif zctrl.symbol == "mode":
+            self._set_chord_gate_mode(int(zctrl.value))
+            self._update_monitors()
 
     # ---------------------------------------------------------------------------
     # Transport Controls (via jalv LV2 control ports)
@@ -413,6 +443,10 @@ class zynthian_engine_companion(zynthian_engine):
             return
         self.proc_cmd("set play {}".format(PLAY_STOP))
         self.playing = False
+        self.current_chord_root = None
+        self.current_chord_quality = None
+        self.current_chord = ""
+        self.current_chord_valid = False
         logging.info("Companion: Stop playing")
         self._update_monitors()
 
@@ -436,6 +470,42 @@ class zynthian_engine_companion(zynthian_engine):
         bpm = max(40.0, min(240.0, float(bpm)))
         self.proc_cmd("set tempo {:.1f}".format(bpm))
         self.current_tempo = bpm
+
+    def _set_chord_gate_mode(self, mode):
+        if not self.proc:
+            return
+        mode = self._normalize_chord_gate_mode_input(mode)
+        self.proc_cmd("set chord_gate_mode {}".format(mode))
+        self.chord_gate_mode = mode
+        if mode == CHORD_GATE_DRUMS_ONLY:
+            self.current_chord_root = None
+            self.current_chord_quality = None
+            self.current_chord = ""
+            self.current_chord_valid = False
+
+    def set_chord_gate_mode(self, mode):
+        self._set_chord_gate_mode(mode)
+        self._update_monitors()
+
+    @staticmethod
+    def _normalize_chord_gate_mode_input(mode):
+        """Normalize controller values: 0=drums-only, 1=sync-start."""
+        try:
+            mode = int(mode)
+        except Exception:
+            return CHORD_GATE_DRUMS_ONLY
+
+        # Controller values are expected as 0/1, but accept 2 as sync-start.
+        if mode == 0:
+            return CHORD_GATE_DRUMS_ONLY
+        if mode in (1, CHORD_GATE_SYNC_START):
+            return CHORD_GATE_SYNC_START
+        return CHORD_GATE_DRUMS_ONLY
+
+    @staticmethod
+    def _normalize_chord_gate_mode_feedback(mode):
+        """Normalize LV2 feedback values: 1=drums-only, 2=sync-start."""
+        return CHORD_GATE_SYNC_START if int(mode) == CHORD_GATE_SYNC_START else CHORD_GATE_DRUMS_ONLY
 
     # ---------------------------------------------------------------------------
     # Style Parsing
@@ -496,12 +566,19 @@ class zynthian_engine_companion(zynthian_engine):
 
         self._ctrls = [
             ['transport', None, 0, ['stopped', 'playing']],
+            ['mode', {
+                'name': 'Mode',
+                'value': 1 if self.chord_gate_mode == CHORD_GATE_SYNC_START else 0,
+                'labels': ['drums only', 'sync start'],
+                'ticks': [0, 1],
+                'is_integer': True,
+            }],
             ['section', None, 0, [str(i) + ": " + s for i, s in enumerate(section_labels)]],
             ['tempo', {'value': int(self.current_tempo), 'value_min': 40, 'value_max': 240, 'is_integer': True}],
         ]
 
         self._ctrl_screens = [
-            ['Style', ['transport', 'section', 'tempo']]
+            ['Style', ['transport', 'mode', 'section', 'tempo']]
         ]
 
     # ---------------------------------------------------------------------------
@@ -517,6 +594,7 @@ class zynthian_engine_companion(zynthian_engine):
             'playing': self.playing,
             'channel_instruments': dict(self.channel_instruments),
             'detected_chord': self.current_chord,
+            'chord_gate_mode': self.chord_gate_mode,
             'tempo': self.current_tempo,
             'position': 0,
         }
@@ -528,6 +606,7 @@ class zynthian_engine_companion(zynthian_engine):
         self.monitors_dict['playing'] = self.playing
         self.monitors_dict['tempo'] = self.current_tempo
         self.monitors_dict['detected_chord'] = self.current_chord
+        self.monitors_dict['chord_gate_mode'] = self.chord_gate_mode
         return self.monitors_dict
 
     @classmethod
