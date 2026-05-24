@@ -22,6 +22,7 @@
 #
 # ******************************************************************************
 
+import copy
 import os
 import logging
 from threading import Thread
@@ -341,17 +342,32 @@ class zynthian_engine_companion(zynthian_engine):
     def get_preset_list(self, bank, processor=None):
         if bank[0] is None or bank[0] == "":
             return []
+        if processor and processor.preset_subdir_info:
+            dpath = processor.preset_subdir_info[0]
+        else:
+            dpath = bank[0]
         return self.get_filelist(
-            bank[0],
+            dpath,
             self.preset_fexts,
             include_dirs=True,
             exclude_empty_dirs=True
         )
 
     def set_preset(self, processor, preset, preload=False):
+        if os.path.isdir(str(preset[0])):
+            if processor.preset_subdir_info:
+                back_subdir_info = processor.preset_subdir_info
+            else:
+                back_subdir_info = None
+            processor.preset_subdir_info = copy.copy(preset)
+            processor.preset_subdir_info[1] = processor.preset_index
+            processor.preset_subdir_info[3] = back_subdir_info
+            processor.preset_index = 0
+            processor.preset_name = None
+            processor.preset_info = None
+            return None
+
         if preset[0] is None or not os.path.isfile(str(preset[0])):
-            if os.path.isdir(str(preset[0])):
-                return None
             return False
 
         fpath = preset[0]
