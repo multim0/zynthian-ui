@@ -245,8 +245,12 @@ class zynthian_engine_companion(zynthian_engine):
             except ValueError:
                 return
             if 0 <= ch < 16:
-                gm = int(max(0, min(127, round(value))))
-                self.channel_instruments[ch] = self.gm_program_name(gm)
+                if value < 0:
+                    # -1.0 sentinel: channel exists in style but has no instrument assigned
+                    self.channel_instruments[ch] = None
+                else:
+                    gm = int(max(0, min(127, round(value))))
+                    self.channel_instruments[ch] = self.gm_program_name(gm)
                 self._update_monitors()
             return
 
@@ -647,12 +651,17 @@ class zynthian_engine_companion(zynthian_engine):
     def _get_instrument_menu_options(self):
         instruments = self.get_monitors_dict().get('channel_instruments', {})
         options = {}
-        if not instruments:
+        assigned = {ch: name for ch, name in instruments.items() if name is not None}
+        if not assigned:
             options["No instruments loaded"] = None
             return options
 
         for channel in sorted(instruments):
-            options[f"Ch {channel + 1}: {instruments[channel]}"] = None
+            name = instruments[channel]
+            if name is not None:
+                options[f"Ch {channel + 1}: {name}"] = None
+            else:
+                options[f"Ch {channel + 1}: (not assigned)"] = None
         return options
 
     @staticmethod
