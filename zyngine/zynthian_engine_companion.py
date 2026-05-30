@@ -68,6 +68,8 @@ LOAD_FILE_PATH = "/tmp/.companion_style_path"
 
 class zynthian_engine_companion(zynthian_engine):
 
+    OPTION_SHOW_INSTRUMENTS = "show_instruments"
+
     # ---------------------------------------------------------------------------
     # Config variables
     # ---------------------------------------------------------------------------
@@ -306,6 +308,23 @@ class zynthian_engine_companion(zynthian_engine):
 
     def get_path(self, processor=None):
         return self.name
+
+    def get_processor_options(self, processor=None):
+        return {
+            "Loaded Instruments": self.OPTION_SHOW_INSTRUMENTS,
+        }
+
+    def processor_options_cb(self, option, processor, zyngui):
+        if option != self.OPTION_SHOW_INSTRUMENTS:
+            return
+
+        zyngui.screens['option'].config(
+            "Loaded Instruments",
+            self._get_instrument_menu_options(),
+            self._instrument_options_cb,
+            close_on_select=False
+        )
+        zyngui.show_screen('option')
 
     # ---------------------------------------------------------------------------
     # Bank Management
@@ -624,6 +643,21 @@ class zynthian_engine_companion(zynthian_engine):
         self.monitors_dict['detected_chord'] = self.current_chord
         self.monitors_dict['chord_gate_mode'] = self.chord_gate_mode
         return self.monitors_dict
+
+    def _get_instrument_menu_options(self):
+        instruments = self.get_monitors_dict().get('channel_instruments', {})
+        options = {}
+        if not instruments:
+            options["No instruments loaded"] = None
+            return options
+
+        for channel in sorted(instruments):
+            options[f"Ch {channel + 1}: {instruments[channel]}"] = None
+        return options
+
+    @staticmethod
+    def _instrument_options_cb(option, param):
+        return
 
     @classmethod
     def _format_chord(cls, root, quality):

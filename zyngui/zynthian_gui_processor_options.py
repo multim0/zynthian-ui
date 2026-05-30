@@ -76,6 +76,12 @@ class zynthian_gui_processor_options(zynthian_gui_selector):
             if self.last_random:
                 self.list_data.append((self.undo_randomize, None, "Undo Randomize"))
 
+        proc_options = self.processor.engine.get_processor_options(self.processor)
+        if proc_options:
+            self.list_data.append((None, None, f"> {self.processor.engine.name}"))
+            for title, option in proc_options.items():
+                self.list_data.append((self.processor_option, option, title))
+
         self.list_data.append((self.midi_clean, None, "Clean MIDI-learn"))
         self.list_data.append((self.control_view, None, "Control View"))
         # Processor info
@@ -155,6 +161,9 @@ class zynthian_gui_processor_options(zynthian_gui_selector):
 
     def preset_list(self):
         self.zyngui.cuia_bank_preset(self.processor)
+
+    def processor_option(self, option):
+        self.processor.engine.processor_options_cb(option, self.processor, self.zyngui)
 
     def midi_clean(self):
         if self.processor:

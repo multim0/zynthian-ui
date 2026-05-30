@@ -39,9 +39,6 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
 
     # Colors
     COLOR_VIEW_BG = "#1A1A1A"
-    COLOR_TAB_ACTIVE = "#396A96"
-    COLOR_TAB_INACTIVE = "#2A2A2A"
-    COLOR_TAB_TEXT = "#F0F0F0"
 
     COLOR_PLAYING = "#00C000"
     COLOR_STOPPED = "#C04040"
@@ -62,16 +59,9 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
     COLOR_CHORD_BOX = "#2E3E2E"
     COLOR_CHORD_TEXT = "#E8FF9E"
 
-    VIEW_PERFORMANCE = "performance"
-    VIEW_PRESETS = "presets"
-    VIEW_INSTRUMENTS = "instruments"
-
-    INSTRUMENTS_PAGE_SIZE = 8
-
     def __init__(self, parent):
         super().__init__(parent)
         self.refreshing = False
-        self.active_view = self.VIEW_PERFORMANCE
         self.style_name = ""
         self.sections = []
         self.current_section = ""
@@ -79,12 +69,6 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
         self.tempo = 120.0
         self.channel_instruments = {}
         self.detected_chord = ""
-        self.instrument_scroll = 0
-
-        self.tab_items = []
-        self.performance_items = []
-        self.preset_items = []
-        self.instrument_items = []
 
         # Main canvas
         self.widget_canvas = tkinter.Canvas(self,
@@ -128,51 +112,7 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
         else:
             y += fs_title + pad
 
-        nav_bottom = self._draw_top_navigation(pad, y, w)
-        content_top = nav_bottom + pad
-
-        if self.active_view == self.VIEW_PERFORMANCE:
-            self._layout_performance(content_top, h - pad, pad, w)
-        elif self.active_view == self.VIEW_PRESETS:
-            self._layout_presets(content_top, h - pad, pad, w)
-        else:
-            self._layout_instruments(content_top, h - pad, pad, w)
-
-    def _draw_top_navigation(self, left, top, width):
-        tabs = [
-            (self.VIEW_PERFORMANCE, "PERFORMANCE"),
-            (self.VIEW_PRESETS, "PRESETS"),
-            (self.VIEW_INSTRUMENTS, "INSTRUMENTS"),
-        ]
-        gap = max(4, width // 120)
-        tab_h = max(32, self.height // 12)
-        tab_w = (width - (2 * left) - (2 * gap)) // 3
-
-        x = left
-        for view_name, label in tabs:
-            active = (view_name == self.active_view)
-            fill = self.COLOR_TAB_ACTIVE if active else self.COLOR_TAB_INACTIVE
-            rect = self.widget_canvas.create_rectangle(
-                x, top, x + tab_w, top + tab_h,
-                fill=fill,
-                outline=self.COLOR_BUTTON_BORDER,
-                width=2,
-                tags="dynamic"
-            )
-            text = self.widget_canvas.create_text(
-                x + tab_w // 2,
-                top + tab_h // 2,
-                anchor=tkinter.CENTER,
-                font=(zynthian_gui_config.font_family, max(9, width // 55), "bold"),
-                fill=self.COLOR_TAB_TEXT,
-                text=label,
-                tags="dynamic"
-            )
-            self.widget_canvas.tag_bind(rect, "<ButtonPress-1>", lambda event, v=view_name: self.on_view_select(v))
-            self.widget_canvas.tag_bind(text, "<ButtonPress-1>", lambda event, v=view_name: self.on_view_select(v))
-            x += tab_w + gap
-
-        return top + tab_h
+        self._layout_performance(y, h - pad, pad, w)
 
     def _layout_performance(self, top, bottom, left, width):
         content_h = max(1, bottom - top)
@@ -310,186 +250,6 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
                 self.widget_canvas.tag_bind(rect, "<ButtonPress-1>", lambda event, i=idx: self.on_section_click(i))
                 self.widget_canvas.tag_bind(text, "<ButtonPress-1>", lambda event, i=idx: self.on_section_click(i))
 
-    def _layout_presets(self, top, bottom, left, width):
-        fs_header = max(10, width // 38)
-        fs_text = max(9, width // 48)
-        fs_button = max(11, width // 36)
-
-        self.widget_canvas.create_text(
-            left,
-            top,
-            anchor=tkinter.NW,
-            font=(zynthian_gui_config.font_family, fs_header, "bold"),
-            fill=zynthian_gui_config.color_panel_tx,
-            text="PRESET LIST",
-            tags="dynamic"
-        )
-
-        message = "Open the standard preset selection screen to browse and load styles."
-        self.widget_canvas.create_text(
-            left,
-            top + fs_header + 8,
-            anchor=tkinter.NW,
-            font=(zynthian_gui_config.font_family, fs_text),
-            fill=self.COLOR_INSTRUMENT_TEXT,
-            text=message,
-            width=width - (2 * left),
-            tags="dynamic"
-        )
-
-        btn_w = max(140, width - (2 * left))
-        btn_h = max(54, (bottom - top) // 5)
-        btn_x = left
-        btn_y = top + max(70, (bottom - top) // 3)
-
-        rect = self.widget_canvas.create_rectangle(
-            btn_x, btn_y, btn_x + btn_w, btn_y + btn_h,
-            fill=self.COLOR_BUTTON_BG,
-            outline=self.COLOR_BUTTON_BORDER,
-            width=2,
-            tags="dynamic"
-        )
-        text = self.widget_canvas.create_text(
-            btn_x + btn_w // 2,
-            btn_y + btn_h // 2,
-            anchor=tkinter.CENTER,
-            font=(zynthian_gui_config.font_family, fs_button, "bold"),
-            fill=self.COLOR_BUTTON_TEXT,
-            text="OPEN PRESET SELECTOR",
-            tags="dynamic"
-        )
-        self.widget_canvas.tag_bind(rect, "<ButtonPress-1>", self.on_open_preset_list)
-        self.widget_canvas.tag_bind(text, "<ButtonPress-1>", self.on_open_preset_list)
-
-    def _layout_instruments(self, top, bottom, left, width):
-        fs_header = max(10, width // 40)
-        fs_row = max(9, width // 50)
-        fs_hint = max(8, width // 56)
-        gap = max(4, self.height // 110)
-
-        self.widget_canvas.create_text(
-            left,
-            top,
-            anchor=tkinter.NW,
-            font=(zynthian_gui_config.font_family, fs_header, "bold"),
-            fill=zynthian_gui_config.color_panel_tx,
-            text="AVAILABLE INSTRUMENTS",
-            tags="dynamic"
-        )
-
-        y = top + fs_header + 6
-        instruments = [(ch, self.channel_instruments[ch]) for ch in sorted(self.channel_instruments.keys())]
-
-        if not instruments:
-            self.widget_canvas.create_text(
-                left,
-                y,
-                anchor=tkinter.NW,
-                font=(zynthian_gui_config.font_family, fs_row),
-                fill=zynthian_gui_config.color_tx_off,
-                text="No instruments loaded",
-                tags="dynamic"
-            )
-            return
-
-        total = len(instruments)
-        self.instrument_scroll = max(0, min(self.instrument_scroll, max(0, total - self.INSTRUMENTS_PAGE_SIZE)))
-        visible = instruments[self.instrument_scroll:self.instrument_scroll + self.INSTRUMENTS_PAGE_SIZE]
-
-        list_h = max(1, bottom - y - 44)
-        row_h = max(28, (list_h - (len(visible) - 1) * gap) // max(1, len(visible)))
-
-        for i, (channel, name) in enumerate(visible):
-            y1 = y + i * (row_h + gap)
-            y2 = y1 + row_h
-            self.widget_canvas.create_rectangle(
-                left, y1, width - left, y2,
-                fill=self.COLOR_CHANNEL_BG,
-                outline=self.COLOR_BUTTON_BORDER,
-                width=1,
-                tags="dynamic"
-            )
-            self.widget_canvas.create_text(
-                left + 8,
-                y1 + row_h // 2,
-                anchor=tkinter.W,
-                font=(zynthian_gui_config.font_family, fs_row, "bold"),
-                fill=self.COLOR_CHANNEL_TEXT,
-                text=f"Ch {channel + 1}",
-                tags="dynamic"
-            )
-            self.widget_canvas.create_text(
-                left + max(58, width // 8),
-                y1 + row_h // 2,
-                anchor=tkinter.W,
-                font=(zynthian_gui_config.font_family, fs_row),
-                fill=self.COLOR_INSTRUMENT_TEXT,
-                text=name,
-                width=width - left * 2 - max(68, width // 8),
-                tags="dynamic"
-            )
-
-        range_text = f"{self.instrument_scroll + 1}-{self.instrument_scroll + len(visible)} of {total}"
-        hint_y = bottom - 36
-        self.widget_canvas.create_text(
-            left,
-            hint_y,
-            anchor=tkinter.NW,
-            font=(zynthian_gui_config.font_family, fs_hint),
-            fill=zynthian_gui_config.color_tx_off,
-            text=range_text,
-            tags="dynamic"
-        )
-
-        if total > self.INSTRUMENTS_PAGE_SIZE:
-            btn_w = max(54, width // 7)
-            btn_h = max(28, self.height // 16)
-            right = width - left
-
-            prev_rect = self.widget_canvas.create_rectangle(
-                right - 2 * btn_w - 6,
-                hint_y - 4,
-                right - btn_w - 6,
-                hint_y - 4 + btn_h,
-                fill=self.COLOR_BUTTON_BG,
-                outline=self.COLOR_BUTTON_BORDER,
-                width=1,
-                tags="dynamic"
-            )
-            prev_text = self.widget_canvas.create_text(
-                right - int(1.5 * btn_w) - 6,
-                hint_y - 4 + btn_h // 2,
-                anchor=tkinter.CENTER,
-                font=(zynthian_gui_config.font_family, fs_hint + 1, "bold"),
-                fill=self.COLOR_BUTTON_TEXT,
-                text="UP",
-                tags="dynamic"
-            )
-            self.widget_canvas.tag_bind(prev_rect, "<ButtonPress-1>", lambda event: self.on_instrument_scroll(-1))
-            self.widget_canvas.tag_bind(prev_text, "<ButtonPress-1>", lambda event: self.on_instrument_scroll(-1))
-
-            next_rect = self.widget_canvas.create_rectangle(
-                right - btn_w,
-                hint_y - 4,
-                right,
-                hint_y - 4 + btn_h,
-                fill=self.COLOR_BUTTON_BG,
-                outline=self.COLOR_BUTTON_BORDER,
-                width=1,
-                tags="dynamic"
-            )
-            next_text = self.widget_canvas.create_text(
-                right - btn_w // 2,
-                hint_y - 4 + btn_h // 2,
-                anchor=tkinter.CENTER,
-                font=(zynthian_gui_config.font_family, fs_hint + 1, "bold"),
-                fill=self.COLOR_BUTTON_TEXT,
-                text="DOWN",
-                tags="dynamic"
-            )
-            self.widget_canvas.tag_bind(next_rect, "<ButtonPress-1>", lambda event: self.on_instrument_scroll(1))
-            self.widget_canvas.tag_bind(next_text, "<ButtonPress-1>", lambda event: self.on_instrument_scroll(1))
-
     def _draw_action_button(self, x, y, width, height, label, color, callback, font_size):
         rect = self.widget_canvas.create_rectangle(
             x,
@@ -590,7 +350,6 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
                 self.tempo = monitors.get('tempo', 120.0)
                 self.channel_instruments = monitors.get('channel_instruments', {})
                 self.detected_chord = monitors.get('detected_chord', "")
-                self.instrument_scroll = 0
 
     def _update_display(self):
         """Update displayed text and indicators."""
@@ -601,12 +360,19 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
         # Rebuild active view
         self._layout()
 
-    def on_view_select(self, view_name):
-        if view_name not in (self.VIEW_PERFORMANCE, self.VIEW_PRESETS, self.VIEW_INSTRUMENTS):
+    def switch(self, swi, t='S'):
+        # Handle admin/option button: open presets/instruments browser
+        # Similar flow to step-sequencer piano roll opening its options menu
+        if swi == 0 and t == 'S':
+            self.zyngui.cuia_bank_preset()
+            return True
+        return False
+
+    def show_menu(self):
+        if not self.processor:
             return
-        if view_name != self.active_view:
-            self.active_view = view_name
-            self._layout()
+        self.zyngui.screens['processor_options'].processor = self.processor
+        self.zyngui.show_screen('processor_options', hmode=self.zyngui.SCREEN_HMODE_ADD)
 
     def on_play_click(self, event):
         if self.processor:
@@ -620,20 +386,5 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
         """Select a section when clicked."""
         if self.processor and 0 <= section_idx < len(self.sections):
             self.processor.engine.select_section(section_idx)
-
-    def on_open_preset_list(self, event):
-        if not self.processor:
-            return
-        try:
-            self.processor.load_preset_list()
-            self.zyngui.show_screen('preset')
-        except Exception as err:
-            logging.error(f"Companion widget: can't open preset list => {err}")
-
-    def on_instrument_scroll(self, direction):
-        total = len(self.channel_instruments)
-        max_scroll = max(0, total - self.INSTRUMENTS_PAGE_SIZE)
-        self.instrument_scroll = max(0, min(max_scroll, self.instrument_scroll + direction))
-        self._layout()
 
 # ------------------------------------------------------------------------------
