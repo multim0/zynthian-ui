@@ -29,6 +29,7 @@ import logging
 # Zynthian specific modules
 from zyngui import zynthian_gui_config
 from zyngui import zynthian_widget_base
+from zyngine.zynthian_engine_companion import CHORD_GATE_SYNC_START
 
 # ------------------------------------------------------------------------------
 # Zynthian Widget Class for "Companion Style Player"
@@ -51,6 +52,7 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
         self.tempo = 120.0
         self.channel_instruments = {}
         self.detected_chord = ""
+        self.chord_gate_mode = 0
 
         # Per-slot data cached by _layout_section_pads() and used by _update_items()
         self._pad_sec_idx = [None] * _NUM_PADS   # logical section index (int) or None
@@ -269,9 +271,21 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
 
         # Playback status
         playing = self.playing
-        icon  = "▶" if playing else "■"
-        word  = "PLAYING" if playing else "STOPPED"
-        color = cfg.color_hl if playing else cfg.color_low_on
+        sync_waiting = (playing
+                        and self.chord_gate_mode == CHORD_GATE_SYNC_START
+                        and not self.detected_chord)
+        if sync_waiting:
+            icon  = "⏸"
+            word  = "SYNC START"
+            color = cfg.color_ml
+        elif playing:
+            icon  = "▶"
+            word  = "PLAYING"
+            color = cfg.color_hl
+        else:
+            icon  = "■"
+            word  = "STOPPED"
+            color = cfg.color_low_on
         self.widget_canvas.itemconfigure(self._status_text,
             text=f"{icon} {word}", fill=color)
 
@@ -367,6 +381,11 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
                 self.detected_chord = new_chord
                 changed = True
 
+            new_cgm = self.monitors.get('chord_gate_mode', 0)
+            if new_cgm != self.chord_gate_mode:
+                self.chord_gate_mode = new_cgm
+                changed = True
+
             new_tempo = self.monitors.get('tempo', self.tempo)
             if new_tempo != self.tempo:
                 self.tempo = new_tempo
@@ -397,6 +416,7 @@ class zynthian_widget_companion(zynthian_widget_base.zynthian_widget_base):
                 self.tempo = monitors.get('tempo', 120.0)
                 self.channel_instruments = monitors.get('channel_instruments', {})
                 self.detected_chord = monitors.get('detected_chord', "")
+                self.chord_gate_mode = monitors.get('chord_gate_mode', 0)
 
     def switch(self, swi, t='S'):
         if swi == 0 and t == 'S':
