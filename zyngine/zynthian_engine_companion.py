@@ -95,6 +95,19 @@ class zynthian_engine_companion(zynthian_engine):
         7: "aug",
     }
 
+    # Accompaniment role names (matching accompaniment_role_t enum)
+    ROLE_NAMES = {
+        0: "Unknown",
+        1: "SubRhythm",
+        2: "Rhythm",
+        3: "Bass",
+        4: "Chord1",
+        5: "Chord2",
+        6: "Pad",
+        7: "Phrase1",
+        8: "Phrase2",
+    }
+
     # Standard MIDI Controllers
     _ctrls = []
 
@@ -137,6 +150,8 @@ class zynthian_engine_companion(zynthian_engine):
 
         # GM instruments per channel (populated after loading a style)
         self.channel_instruments = {}
+        # Channel roles per channel (populated from LV2 role ports)
+        self.channel_roles = {}
 
         # File-load trigger counter (bumped to signal plugin)
         self.load_file_trigger = 0
@@ -251,6 +266,22 @@ class zynthian_engine_companion(zynthian_engine):
                 else:
                     gm = int(max(0, min(127, round(value))))
                     self.channel_instruments[ch] = self.gm_program_name(gm)
+                self._update_monitors()
+            return
+
+        if symbol.startswith("ch") and symbol.endswith("_role"):
+            ch_text = symbol[2:-5]
+            try:
+                ch = int(ch_text) - 1
+            except ValueError:
+                return
+            if 0 <= ch < 16:
+                role_val = int(round(value))
+                if role_val == -1:
+                    # -1.0 sentinel: no role assigned
+                    self.channel_roles[ch] = None
+                else:
+                    self.channel_roles[ch] = role_val
                 self._update_monitors()
             return
 
@@ -400,6 +431,7 @@ class zynthian_engine_companion(zynthian_engine):
         self.style_file = fpath
         logging.info(f"Companion: Loading style file '{fpath}'")
         self.channel_instruments = {}
+        self.channel_roles = {}
         self.current_chord_root = None
         self.current_chord_quality = None
         self.current_chord = ""
@@ -632,6 +664,7 @@ class zynthian_engine_companion(zynthian_engine):
             'current_section': self.current_section or "",
             'playing': self.playing,
             'channel_instruments': dict(self.channel_instruments),
+            'channel_roles': dict(self.channel_roles),
             'detected_chord': self.current_chord,
             'chord_gate_mode': self.chord_gate_mode,
             'tempo': self.current_tempo,
@@ -650,6 +683,7 @@ class zynthian_engine_companion(zynthian_engine):
 
     def _get_instrument_menu_options(self):
         instruments = self.get_monitors_dict().get('channel_instruments', {})
+        roles = self.get_monitors_dict().get('channel_roles', {})
         options = {}
         assigned = {ch: name for ch, name in instruments.items() if name is not None}
         if not assigned:
@@ -658,10 +692,13 @@ class zynthian_engine_companion(zynthian_engine):
 
         for channel in sorted(instruments):
             name = instruments[channel]
+            role = roles.get(channel)
             if name is not None:
-                options[f"Ch {channel + 1}: {name}"] = None
+                enhanced_name = self._get_enhanced_instrument_name(channel, name, role)
+                options[f"Ch {channel + 1}: {enhanced_name}"] = None
             else:
-                options[f"Ch {channel + 1}: (not assigned)"] = None
+                role_name = self._get_role_name(role) if role is not None else "Unknown"
+                options[f"Ch {channel + 1}: {role_name} (not assigned)"] = None
         return options
 
     @staticmethod
@@ -675,6 +712,28 @@ class zynthian_engine_companion(zynthian_engine):
         note = cls.NOTE_NAMES[int(root) % 12]
         suffix = cls.CHORD_QUALITY_SUFFIX.get(quality, "")
         return f"{note}{suffix}"
+
+    @classmethod
+    def _get_role_name(cls, role):
+        """Return role name for a given role number."""
+        return cls.ROLE_NAMES.get(role, "Unknown")
+
+    def _get_enhanced_instrument_name(self, channel, instrument_name, role):
+        """Return enhanced instrument name with role/category information.
+        
+        For SUBRHYTHM (1) and RHYTHM (2) roles, ensure they display as drum instruments
+        even if the program suggests otherwise.
+        """
+        if role is None:
+            return instrument_name
+            
+        role_name = self._get_role_name(role)
+        
+        # For SUBRHYTHM and RHYTHM roles, force drum kit display
+        if role in (1, 2):  # SUBRHYTHM, RHYTHM
+            return f"{role_name} - Standard Kit"
+        
+        return f"{role_name} - {instrument_name}"
 
     # ---------------------------------------------------------------------------
     # GM Program Names
