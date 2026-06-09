@@ -726,6 +726,12 @@ class zynthian_engine(zynthian_basic_engine):
     def get_options(self):
         return self.options
 
+    def get_processor_options(self, processor=None):
+        return {}
+
+    def processor_options_cb(self, option, processor, zyngui):
+        pass
+
     def get_extended_config(self):
         return None
 

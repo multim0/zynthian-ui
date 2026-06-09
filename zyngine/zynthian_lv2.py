@@ -167,6 +167,7 @@ standalone_engine_info = {
     "SL": ["SooperLooper", "SooperLooper", "Audio Effect", "Delay", True],
     'SX': ["SysEx", "SysEx Manager", "MIDI Tool", "Other", True],
     'MC': ["MIDI Control", "MIDI Control External", "MIDI Tool", "Other", True],
+    'CP': ["Zynthian Companion", "Accompaniment Player", "MIDI Tool", "Sequencer", True],
     'IR': ["InternetRadio", "Internet Radio", "Audio Generator", "Other", True],
     'PD': ["PureData", "PureData - Visual Programming", "Special", "Language", True],
     'MD': ["MOD-UI", "MOD-UI - Plugin Host", "Special", "Language", True]

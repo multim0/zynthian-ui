@@ -623,6 +623,11 @@ class zynthian_gui_control(zynthian_gui_selector):
     # --------------------------------------------------------------------------
 
     def show_menu(self):
+        if self.current_widget:
+            widget_menu = getattr(self.current_widget, "show_menu", None)
+            if callable(widget_menu):
+                widget_menu()
+                return
         zynthian_gui_config.zyngui.show_screen('chain_manager')
 
     def toggle_menu(self):
