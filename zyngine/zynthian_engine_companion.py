@@ -692,13 +692,11 @@ class zynthian_engine_companion(zynthian_engine):
 
         for channel in sorted(instruments):
             name = instruments[channel]
+            if name is None:
+                continue
             role = roles.get(channel)
-            if name is not None:
-                enhanced_name = self._get_enhanced_instrument_name(channel, name, role)
-                options[f"Ch {channel + 1}: {enhanced_name}"] = True
-            else:
-                role_name = self._get_role_name(role) if role is not None else "Unknown"
-                options[f"Ch {channel + 1}: {role_name} (not assigned)"] = True
+            enhanced_name = self._get_enhanced_instrument_name(channel, name, role)
+            options[f"Ch {channel + 1}: {enhanced_name}"] = True
         return options
 
     @staticmethod
